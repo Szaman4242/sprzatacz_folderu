@@ -19,7 +19,10 @@ Wymagany Python 3.12 lub nowszy. Sam program nie używa bibliotek zewnętrznych.
 | python main.py dane_testowe --tryb procesy --pracownicy 4 | liczy skróty w 4 procesach |
 | python main.py dane_testowe --raport wyniki/raport.txt | zapisuje raport tekstowy |
 | python main.py dane_testowe --raport wyniki/raport.csv | zapisuje raport CSV (do otwarcia w Excelu) |
+| python main.py dane_testowe --log wyniki/sprzatacz.log | zapisuje też komunikaty do pliku z datą i godziną |
 | python -m benchmarks.gil_benchmark | pomiar wydajności: sekwencyjnie, wątki, procesy |
+| python -m unittest -v | uruchamia testy jednostkowe |
+| python main.py -h | pokazuje wszystkie opcje programu |
 
 ## Struktura projektu
 
@@ -33,6 +36,7 @@ Wymagany Python 3.12 lub nowszy. Sam program nie używa bibliotek zewnętrznych.
 | sprzatacz/dekoratory.py | własne dekoratory funkcji i metod |
 | sprzatacz/raport.py | klasa Raport, zapis wyników do TXT i CSV |
 | benchmarks/gil_benchmark.py | pomiar wpływu GIL, tabela i wykres wyników |
+| tests/ | testy jednostkowe (unittest) |
 | narzedzia/generuj_dane.py | generator danych testowych |
 | requirements.txt | biblioteki zewnętrzne (matplotlib) |
 
@@ -56,6 +60,15 @@ Wymagany Python 3.12 lub nowszy. Sam program nie używa bibliotek zewnętrznych.
 | @staticmethod | sprzatacz/raport.py → Raport.wybierz_oryginal() |
 | Pomiar GIL | benchmarks/gil_benchmark.py |
 
+## Elementy dodatkowe
+
+| Element | Gdzie w kodzie |
+|---|---|
+| Testy jednostkowe (unittest, 33 testy) | tests/ |
+| Interfejs wiersza poleceń (argparse) | main.py → main(), benchmarks/gil_benchmark.py → main(), narzedzia/generuj_dane.py → main() |
+| Logowanie (logging), także do pliku | main.py → konfiguruj_logowanie(), komunikaty w modułach sprzatacz/ |
+| Wykres wyników pomiarów (matplotlib) | benchmarks/gil_benchmark.py → rysuj_wykres() |
+
 ## Wyniki pomiarów
 
 Pomiar wykonany komendą python -m benchmarks.gil_benchmark. Python 3.12.3 z włączonym GIL, procesor z 20 rdzeniami logicznymi, 20 wątków lub procesów, 174 pliki testowe (około 180 MB). Przed pomiarem wykonywana jest rozgrzewka, żeby wszystkie tryby czytały pliki z pamięci podręcznej systemu. Wynik to mediana z 3 powtórzeń. Czas obejmuje utworzenie puli wątków lub procesów.
@@ -76,3 +89,14 @@ Mierzone są dwa zadania wykonywane dla każdego pliku. SHA-256 z modułu hashli
 ## Wnioski dotyczące GIL
 
 Przy liczeniu SHA-256 wątki dały przyspieszenie 2,31 razy, mimo że w CPythonie działa GIL. Dzieje się tak, ponieważ hashlib liczy skrót w kodzie C i na ten czas zwalnia GIL, więc kilka wątków może pracować równolegle. Przyspieszenie jest mniejsze niż liczba rdzeni, bo część pracy, czyli odczyt plików przez iterator i zapis wyników pod blokadą Lock, nadal wymaga GIL. Procesy przy SHA-256 były ponad trzy razy wolniejsze od wersji sekwencyjnej, ponieważ na Windowsie każdy proces uruchamia nowy interpreter i importuje moduły, a to trwa dłużej niż samo liczenie skrótów dla 180 MB danych. Przy Adler-32 w czystym Pythonie wątki nie dały żadnego zysku (0,98 razy), bo GIL pozwala wykonywać kod Pythona tylko jednemu wątkowi naraz i wątki pracowały na zmianę. Procesy przyspieszyły to zadanie 1,55 razy, ponieważ każdy proces ma własny interpreter i własny GIL i może liczyć na osobnym rdzeniu. Zysk z procesów jest mniejszy niż liczba rdzeni, bo całe zadanie trwa około 0,7 s, a start 20 procesów zajmuje znaczną część tego czasu. Wniosek dla programu jest taki, że do liczenia skrótów domyślnie używane są wątki, bo hashlib zwalnia GIL, a wątki startują prawie bez kosztu. Procesy opłacają się przy dłuższych obliczeniach napisanych w czystym Pythonie.
+
+## Napotkane problemy
+
+| Problem | Rozwiązanie |
+|---|---|
+| Pliki o tym samym rozmiarze nie zawsze są duplikatami. Dane testowe celowo zawierają takie pary (pliki podobny_...). | Grupowanie po rozmiarze służy tylko do wybrania kandydatów, o duplikacie decyduje identyczny skrót SHA-256. |
+| Pierwsze uruchomienie było wielokrotnie wolniejsze od kolejnych (około 15 s zamiast 0,1 s), bo pliki były czytane z dysku, a później z pamięci podręcznej systemu. | W pomiarze dodana jest rozgrzewka, a wynik to mediana z kilku powtórzeń. |
+| Na Windowsie nowe procesy importują główny moduł od nowa i dostają funkcje przez pickle. | Kod uruchamiający program jest w bloku if \_\_name\_\_ == "\_\_main\_\_", a funkcja wysyłana do procesów (skrot_pliku) jest zdefiniowana na poziomie modułu. |
+| Procesy okazały się wolniejsze od wątków przy liczeniu SHA-256. | Pomiar pokazał, że koszt startu procesów jest większy niż samo liczenie, dlatego domyślnym trybem programu są wątki. |
+| Wiele wątków zapisuje wyniki do wspólnego słownika i licznika, co grozi utratą danych. | Zapis odbywa się pod blokadą threading.Lock w klasie ZbieraczWynikow, co sprawdza test z 50 wątkami. |
+| Trzeba było zdecydować, który plik z grupy duplikatów zostawić. | Metoda Raport.wybierz_oryginal() wybiera plik bez dopisku kopii w nazwie, rozpoznawanego wyrażeniem regularnym KOPIA_RE. |

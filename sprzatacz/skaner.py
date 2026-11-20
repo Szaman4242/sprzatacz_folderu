@@ -1,13 +1,4 @@
-"""Skanowanie folderu – potok generatorów.
-
-Przepływ danych (każdy krok to generator, pliki "płyną" po jednym):
-
-    skanuj(katalog)  ->  filtruj(pliki)  ->  grupuj_po_rozmiarze(pliki)
-    (wszystkie pliki)    (bez tymczasowych    (słownik: rozmiar -> lista plików,
-                          i za małych)         tylko grupy z >= 2 plikami)
-
-Dzięki generatorom nie trzymamy w pamięci listy wszystkich plików naraz.
-"""
+"""Skanowanie folderu i wybór kandydatów na duplikaty."""
 
 import logging
 import os
@@ -22,19 +13,12 @@ logger = logging.getLogger(__name__)
 
 
 class InfoPliku(NamedTuple):
-    """Ścieżka do pliku i jego rozmiar w bajtach."""
-
     sciezka: Path
     rozmiar: int
 
 
 def skanuj(katalog: Path) -> Iterator[InfoPliku]:
-    """Rekurencyjnie zwraca wszystkie pliki z katalogu i jego podkatalogów.
-
-    Funkcja-generator: zamiast budować listę, oddaje pliki po jednym (yield).
-    Dla podkatalogów wywołuje samą siebie i przekazuje dalej ich wyniki
-    za pomocą ``yield from``.
-    """
+    """Zwraca po kolei wszystkie pliki z katalogu i podkatalogów."""
     try:
         wpisy = os.scandir(katalog)
     except (PermissionError, FileNotFoundError) as blad:
@@ -53,11 +37,7 @@ def skanuj(katalog: Path) -> Iterator[InfoPliku]:
 
 
 def filtruj(pliki: Iterable[InfoPliku], min_rozmiar: int = 1) -> Iterator[InfoPliku]:
-    """Przepuszcza dalej tylko pliki, które warto sprawdzać.
-
-    Odrzuca pliki tymczasowe/systemowe (regex z modułu wzorce) oraz pliki
-    mniejsze niż ``min_rozmiar`` bajtów (np. puste).
-    """
+    """Pomija pliki tymczasowe i mniejsze niż min_rozmiar."""
     for plik in pliki:
         if czy_pominac(plik.sciezka.name):
             logger.debug("Pomijam plik tymczasowy: %s", plik.sciezka)
@@ -68,11 +48,7 @@ def filtruj(pliki: Iterable[InfoPliku], min_rozmiar: int = 1) -> Iterator[InfoPl
 
 
 def grupuj_po_rozmiarze(pliki: Iterable[InfoPliku]) -> dict[int, list[Path]]:
-    """Grupuje pliki według rozmiaru i zostawia tylko grupy z co najmniej 2 plikami.
-
-    Pliki o różnym rozmiarze na pewno nie są duplikatami, więc dalej
-    (liczenie skrótów SHA-256) sprawdzamy tylko te o identycznym rozmiarze.
-    """
+    """Grupuje pliki po rozmiarze, zostawia tylko grupy z co najmniej 2 plikami."""
     grupy: dict[int, list[Path]] = defaultdict(list)
     for plik in pliki:
         grupy[plik.rozmiar].append(plik.sciezka)

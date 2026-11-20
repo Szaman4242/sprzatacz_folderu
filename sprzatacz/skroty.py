@@ -1,15 +1,4 @@
-"""Liczenie skrótów SHA-256 i wyszukiwanie prawdziwych duplikatów.
-
-Dwa pliki są duplikatami, jeśli mają identyczny skrót SHA-256. Liczymy go
-tylko dla plików o tym samym rozmiarze (kandydatów ze skaner.py).
-
-Trzy tryby pracy:
-  * sekwencyjnie – pliki jeden po drugim,
-  * watki        – ThreadPoolExecutor; wątki same zapisują wyniki do wspólnego
-                   obiektu, więc zapis jest chroniony blokadą (Lock),
-  * procesy      – ProcessPoolExecutor; procesy mają osobną pamięć, więc
-                   zwracają wyniki, a zapisuje je proces główny.
-"""
+"""Liczenie skrótów SHA-256: sekwencyjnie, wątkami albo procesami."""
 
 import hashlib
 import logging
@@ -27,15 +16,10 @@ logger = logging.getLogger(__name__)
 TRYBY = ("sekwencyjnie", "watki", "procesy")
 
 
-# Ponawiamy tylko przy PermissionError (np. plik chwilowo zablokowany przez inny
-# program). FileNotFoundError nie ma sensu ponawiać – pliku i tak nie będzie.
+# FileNotFoundError nie ma sensu ponawiać, PermissionError tak (plik zablokowany)
 @ponow(proby=3, opoznienie=0.2, wyjatki=(PermissionError,))
 def oblicz_skrot(sciezka: Path) -> str:
-    """Zwraca skrót SHA-256 pliku jako tekst szesnastkowy (64 znaki).
-
-    Plik jest czytany kawałkami przez iterator CzytnikPliku, więc nawet
-    bardzo duży plik nie trafia w całości do pamięci.
-    """
+    """Skrót SHA-256 pliku jako tekst szesnastkowy."""
     skrot = hashlib.sha256()
     with CzytnikPliku(sciezka) as czytnik:
         for kawalek in czytnik:
@@ -44,11 +28,7 @@ def oblicz_skrot(sciezka: Path) -> str:
 
 
 def skrot_pliku(sciezka: Path) -> tuple[Path, str | None]:
-    """Zwraca parę (ścieżka, skrót). Gdy pliku nie da się odczytać, skrót to None.
-
-    Funkcja jest zdefiniowana na poziomie modułu, bo ProcessPoolExecutor musi
-    móc ją przesłać do innego procesu (pickle).
-    """
+    """Zwraca (ścieżka, skrót), a przy błędzie odczytu (ścieżka, None)."""
     try:
         return sciezka, oblicz_skrot(sciezka)
     except OSError as blad:
@@ -57,12 +37,7 @@ def skrot_pliku(sciezka: Path) -> tuple[Path, str | None]:
 
 
 class ZbieraczWynikow:
-    """Wspólne miejsce na wyniki, do którego może pisać wiele wątków naraz.
-
-    Każdy zapis odbywa się pod blokadą (threading.Lock). Bez niej dwa wątki
-    mogłyby jednocześnie zmieniać słownik i licznik, a wtedy np. operacja
-    ``przetworzone += 1`` mogłaby zgubić jedno zwiększenie.
-    """
+    """Wyniki zapisywane przez wiele wątków, chronione blokadą."""
 
     def __init__(self) -> None:
         self._blokada = threading.Lock()
@@ -70,14 +45,12 @@ class ZbieraczWynikow:
         self.przetworzone = 0
 
     def dodaj(self, sciezka: Path, skrot: str | None) -> None:
-        """Zapisuje wynik dla jednego pliku (bezpiecznie dla wątków)."""
         with self._blokada:
             if skrot is not None:
                 self.po_skrocie[skrot].append(sciezka)
             self.przetworzone += 1
 
     def duplikaty(self) -> list[list[Path]]:
-        """Zwraca grupy plików o identycznym skrócie (co najmniej 2 pliki)."""
         return [grupa for grupa in self.po_skrocie.values() if len(grupa) > 1]
 
 
@@ -90,18 +63,16 @@ def _licz_watkami(
     kandydaci: Iterable[Path], zbieracz: ZbieraczWynikow, pracownicy: int | None
 ) -> None:
     def zadanie(sciezka: Path) -> None:
-        # Każdy wątek sam zapisuje swój wynik do wspólnego zbieracza (pod Lockiem).
         zbieracz.dodaj(*skrot_pliku(sciezka))
 
     with ThreadPoolExecutor(max_workers=pracownicy) as pula:
-        list(pula.map(zadanie, kandydaci))  # list() czeka na wszystkie wątki
+        list(pula.map(zadanie, kandydaci))
 
 
 def _licz_procesami(
     kandydaci: Iterable[Path], zbieracz: ZbieraczWynikow, pracownicy: int | None
 ) -> None:
-    # Procesy nie widzą obiektu zbieracz (osobna pamięć), więc tylko zwracają
-    # wyniki, a zapisuje je proces główny w tej pętli.
+    # procesy nie widzą zbieracza, więc wyniki zapisuje proces główny
     with ProcessPoolExecutor(max_workers=pracownicy) as pula:
         for sciezka, skrot in pula.map(skrot_pliku, kandydaci, chunksize=4):
             zbieracz.dodaj(sciezka, skrot)
@@ -113,13 +84,7 @@ def znajdz_duplikaty(
     tryb: str = "watki",
     pracownicy: int | None = None,
 ) -> list[list[Path]]:
-    """Zwraca listę grup duplikatów (każda grupa to pliki o identycznej treści).
-
-    Args:
-        grupy: wynik grupuj_po_rozmiarze(), czyli rozmiar -> lista plików.
-        tryb: "sekwencyjnie", "watki" albo "procesy".
-        pracownicy: liczba wątków/procesów; None = wartość domyślna Pythona.
-    """
+    """Zwraca grupy plików o identycznej treści."""
     if tryb not in TRYBY:
         raise ValueError(f"Nieznany tryb '{tryb}', dostępne: {', '.join(TRYBY)}")
     if pracownicy is not None and pracownicy < 1:

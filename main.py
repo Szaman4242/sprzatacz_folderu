@@ -1,13 +1,4 @@
-"""Sprzątacz folderu – punkt wejścia programu.
-
-Skanuje folder, wybiera pliki o tym samym rozmiarze, liczy dla nich skróty
-SHA-256 i wypisuje grupy prawdziwych duplikatów oraz miejsce do odzyskania.
-
-Uruchomienie:
-    python main.py dane_testowe
-    python main.py dane_testowe --tryb procesy --pracownicy 4
-    python main.py dane_testowe --raport wyniki/raport.csv
-"""
+"""Sprzątacz folderu: wyszukiwanie zduplikowanych plików."""
 
 import argparse
 import logging
@@ -17,6 +8,24 @@ from pathlib import Path
 from sprzatacz.raport import Raport
 from sprzatacz.skaner import filtruj, grupuj_po_rozmiarze, skanuj
 from sprzatacz.skroty import TRYBY, znajdz_duplikaty
+
+
+def konfiguruj_logowanie(szczegolowo: bool, plik_logu: Path | None) -> None:
+    """Logi na ekran, a opcjonalnie także do pliku."""
+    ekran = logging.StreamHandler()
+    ekran.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
+    obslugi: list[logging.Handler] = [ekran]
+
+    if plik_logu is not None:
+        plik_logu.parent.mkdir(parents=True, exist_ok=True)
+        do_pliku = logging.FileHandler(plik_logu, encoding="utf-8")
+        do_pliku.setFormatter(
+            logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+        )
+        obslugi.append(do_pliku)
+
+    logging.basicConfig(level=logging.DEBUG if szczegolowo else logging.INFO,
+                        handlers=obslugi)
 
 
 def main() -> int:
@@ -30,6 +39,8 @@ def main() -> int:
                         help="liczba wątków lub procesów (domyślnie: automatycznie)")
     parser.add_argument("--raport", type=Path, default=None,
                         help="zapisz raport do pliku .txt lub .csv")
+    parser.add_argument("--log", type=Path, default=None,
+                        help="zapisuj też komunikaty do pliku (np. wyniki/sprzatacz.log)")
     parser.add_argument("-v", "--verbose", action="store_true", help="więcej komunikatów")
     args = parser.parse_args()
 
@@ -38,24 +49,18 @@ def main() -> int:
     if args.raport and args.raport.suffix.lower().lstrip(".") not in Raport.FORMATY:
         parser.error("--raport musi mieć rozszerzenie .txt lub .csv")
 
-    logging.basicConfig(
-        level=logging.DEBUG if args.verbose else logging.INFO,
-        format="%(levelname)s: %(message)s",
-    )
+    konfiguruj_logowanie(args.verbose, args.log)
 
     if not args.katalog.is_dir():
         print(f"Błąd: '{args.katalog}' nie jest folderem.", file=sys.stderr)
         return 1
 
-    # Krok 1: potok generatorów – skanowanie, filtrowanie, grupowanie po rozmiarze
     pliki = filtruj(skanuj(args.katalog), min_rozmiar=args.min_rozmiar)
     grupy = grupuj_po_rozmiarze(pliki)
     liczba_kandydatow = sum(len(sciezki) for sciezki in grupy.values())
 
-    # Krok 2: skróty SHA-256 tylko dla kandydatów (czas mierzy dekorator @zmierz_czas)
     duplikaty = znajdz_duplikaty(grupy, tryb=args.tryb, pracownicy=args.pracownicy)
 
-    # Krok 3: raport
     raport = Raport(duplikaty, args.katalog)
     print(f"Kandydaci (ten sam rozmiar): {liczba_kandydatow} plików")
     print(raport.podsumowanie())
@@ -63,7 +68,7 @@ def main() -> int:
         print(raport.szczegoly())
 
     if args.raport:
-        raport.format = args.raport.suffix  # setter @property sprawdza format
+        raport.format = args.raport.suffix
         try:
             raport.zapisz(args.raport)
         except OSError as blad:

@@ -1,15 +1,7 @@
-"""Pomiar wpływu GIL: sekwencyjnie vs wątki vs procesy.
+"""Pomiar wpływu GIL: SHA-256 z hashlib (kod w C) i Adler-32 w czystym Pythonie,
+każde sekwencyjnie, wątkami i procesami.
 
-Mierzymy dwa zadania wykonywane dla każdego pliku z folderu:
-
-  1. SHA-256 przez hashlib – to samo, co robi program. Liczenie odbywa się
-     w kodzie C, który na ten czas ZWALNIA GIL.
-  2. Adler-32 napisany w czystym Pythonie – pętla po bajtach. Interpreter
-     wykonuje każdą instrukcję i przez cały czas TRZYMA GIL.
-
-Uruchomienie (z głównego folderu projektu):
-    python -m benchmarks.gil_benchmark
-    python -m benchmarks.gil_benchmark --powtorzenia 5 --pracownicy 8
+Uruchomienie: python -m benchmarks.gil_benchmark
 """
 
 import argparse
@@ -31,11 +23,7 @@ ADLER = "Adler-32 (czysty Python)"
 
 
 def adler32_python(dane: bytes) -> int:
-    """Suma kontrolna Adler-32 liczona w czystym Pythonie.
-
-    Daje ten sam wynik co zlib.adler32(dane), ale każdy bajt przechodzi przez
-    interpreter Pythona, więc zadanie przez cały czas trzyma GIL.
-    """
+    """Adler-32 w czystym Pythonie, ten sam wynik co zlib.adler32()."""
     a, b = 1, 0
     for bajt in dane:
         a = (a + bajt) % 65521
@@ -44,7 +32,7 @@ def adler32_python(dane: bytes) -> int:
 
 
 def adler32_pliku(sciezka: Path, limit_bajtow: int) -> int:
-    """Liczy adler32_python() dla pierwszych ``limit_bajtow`` bajtów pliku."""
+    """Adler-32 z pierwszych limit_bajtow bajtów pliku."""
     dane = bytearray()
     with CzytnikPliku(sciezka) as czytnik:
         for kawalek in czytnik:
@@ -56,10 +44,7 @@ def adler32_pliku(sciezka: Path, limit_bajtow: int) -> int:
 
 def uruchom(zadanie: Callable[[Path], object], pliki: list[Path], tryb: str,
             pracownicy: int) -> float:
-    """Wykonuje zadanie dla wszystkich plików w danym trybie i zwraca czas w sekundach.
-
-    Czas obejmuje też utworzenie puli wątków/procesów – tak jak w prawdziwym programie.
-    """
+    """Czas wykonania zadania dla wszystkich plików (razem z utworzeniem puli)."""
     start = time.perf_counter()
     if tryb == "sekwencyjnie":
         list(map(zadanie, pliki))
@@ -74,10 +59,9 @@ def uruchom(zadanie: Callable[[Path], object], pliki: list[Path], tryb: str,
 
 def zmierz(pliki: list[Path], powtorzenia: int, pracownicy: int,
            limit_bajtow: int) -> dict[str, dict[str, float]]:
-    """Zwraca medianę czasów: wyniki[zadanie][tryb] = sekundy."""
+    """Mediana czasów: wyniki[zadanie][tryb] = sekundy."""
     zadania: dict[str, Callable[[Path], object]] = {
         SHA: oblicz_skrot,
-        # partial "przypina" limit_bajtow; obiekt partial da się przesłać do procesu
         ADLER: functools.partial(adler32_pliku, limit_bajtow=limit_bajtow),
     }
     wyniki: dict[str, dict[str, float]] = {}
@@ -91,7 +75,7 @@ def zmierz(pliki: list[Path], powtorzenia: int, pracownicy: int,
 
 
 def tabela_markdown(wyniki: dict[str, dict[str, float]]) -> str:
-    """Tabela wyników w formacie Markdown (do wklejenia w README)."""
+    """Tabela wyników w Markdown."""
     linie = ["| Zadanie | Tryb | Czas [s] | Przyspieszenie |", "|---|---|---|---|"]
     for zadanie, czasy in wyniki.items():
         for tryb, czas in czasy.items():
@@ -101,10 +85,10 @@ def tabela_markdown(wyniki: dict[str, dict[str, float]]) -> str:
 
 
 def rysuj_wykres(wyniki: dict[str, dict[str, float]], sciezka: Path, opis: str) -> bool:
-    """Rysuje wykres przyspieszeń. Zwraca False, jeśli brak biblioteki matplotlib."""
+    """Wykres przyspieszeń. Zwraca False, gdy nie ma matplotlib."""
     try:
         import matplotlib
-        matplotlib.use("Agg")  # rysowanie do pliku, bez okna
+        matplotlib.use("Agg")
         import matplotlib.pyplot as plt
     except ImportError:
         return False
@@ -164,13 +148,12 @@ def main() -> int:
     if not pliki:
         parser.error(f"W folderze '{args.dane}' nie ma plików")
 
-    gil = getattr(sys, "_is_gil_enabled", lambda: True)()  # funkcja jest od Pythona 3.13
+    gil = getattr(sys, "_is_gil_enabled", lambda: True)()  # od Pythona 3.13
     opis = (f"Python {sys.version.split()[0]}, GIL {'włączony' if gil else 'wyłączony'}, "
             f"{os.cpu_count()} rdzeni logicznych, {args.pracownicy} pracowników")
     print(f"{opis}\nPlików: {len(pliki)}, powtórzeń: {args.powtorzenia}")
 
-    # Rozgrzewka: pierwszy odczyt idzie z dysku, kolejne z pamięci podręcznej systemu.
-    # Bez tego pierwszy mierzony tryb byłby niesprawiedliwie wolniejszy.
+    # pierwszy odczyt idzie z dysku, kolejne z pamięci podręcznej
     print("Rozgrzewka...")
     uruchom(oblicz_skrot, pliki, "sekwencyjnie", args.pracownicy)
 
@@ -186,7 +169,7 @@ def main() -> int:
     if rysuj_wykres(wyniki, wykres, opis):
         print(f"\nZapisano: {args.wyniki / 'gil_benchmark.md'} oraz {wykres}")
     else:
-        print("\nBrak matplotlib – pomijam wykres (pip install -r requirements.txt).")
+        print("\nBrak matplotlib, pomijam wykres (pip install -r requirements.txt).")
     return 0
 
 

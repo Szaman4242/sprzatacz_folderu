@@ -1,14 +1,4 @@
-"""Generuje folder z danymi testowymi dla Sprzątacza.
-
-Tworzy losowe pliki w kilku podfolderach, a wśród nich:
-  * duplikaty (ta sama treść) z nazwami typu "zdjecie (2).jpg", "raport - Kopia.pdf",
-  * pliki o tym samym rozmiarze, ale innej treści (to NIE są duplikaty),
-  * pliki tymczasowe ("~$dokument.docx", "notatki.tmp"), które program ma pominąć.
-
-Uruchomienie (z głównego folderu projektu):
-    python narzedzia/generuj_dane.py
-    python narzedzia/generuj_dane.py --liczba 200 --max-mb 4 --folder dane_testowe
-"""
+"""Generator danych testowych: oryginały, kopie, pliki podobne i tymczasowe."""
 
 import argparse
 import random
@@ -26,22 +16,19 @@ ROZSZERZENIA = {
 
 
 def nazwa_kopii(sciezka: Path, numer: int) -> str:
-    """Zwraca nazwę kopii w stylu Windows, np. 'plik (2).jpg' albo 'plik - Kopia.jpg'."""
     if numer == 1:
         return f"{sciezka.stem} - Kopia{sciezka.suffix}"
     return f"{sciezka.stem} ({numer}){sciezka.suffix}"
 
 
 def generuj(folder: Path, liczba: int, max_mb: float, ziarno: int) -> None:
-    """Tworzy ``liczba`` oryginalnych plików oraz ich kopie w folderze ``folder``."""
-    los = random.Random(ziarno)  # stałe ziarno -> zawsze te same dane
+    los = random.Random(ziarno)
     if folder.exists():
         shutil.rmtree(folder)
 
     max_bajtow = int(max_mb * 1024 * 1024)
     oryginaly: list[Path] = []
 
-    # 1. Oryginalne pliki z losową treścią
     for i in range(1, liczba + 1):
         podfolder = los.choice(PODFOLDERY)
         sciezka = folder / podfolder / f"plik_{i:03d}{ROZSZERZENIA[podfolder]}"
@@ -49,7 +36,6 @@ def generuj(folder: Path, liczba: int, max_mb: float, ziarno: int) -> None:
         sciezka.write_bytes(los.randbytes(los.randint(10_000, max_bajtow)))
         oryginaly.append(sciezka)
 
-    # 2. Duplikaty: ok. 30% plików dostaje 1–3 kopie (w tym samym lub innym folderze)
     liczba_kopii = 0
     for oryginal in los.sample(oryginaly, k=len(oryginaly) * 3 // 10):
         for numer in range(1, los.randint(1, 3) + 1):
@@ -58,12 +44,11 @@ def generuj(folder: Path, liczba: int, max_mb: float, ziarno: int) -> None:
             shutil.copyfile(oryginal, cel / nazwa_kopii(oryginal, numer))
             liczba_kopii += 1
 
-    # 3. Ten sam rozmiar, inna treść – pułapka: rozmiar się zgadza, ale to nie duplikat
+    # ten sam rozmiar, inna treść
     for oryginal in los.sample(oryginaly, k=5):
         rozmiar = oryginal.stat().st_size
         (oryginal.parent / f"podobny_{oryginal.name}").write_bytes(los.randbytes(rozmiar))
 
-    # 4. Pliki tymczasowe, które program powinien pominąć
     for nazwa in ["~$dokument.docx", "notatki.tmp", "kopia.bak", "Thumbs.db"]:
         (folder / "dokumenty" / nazwa).write_bytes(b"x" * 20_000)
 

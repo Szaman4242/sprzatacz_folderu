@@ -1,1 +1,1 @@
-"""Sprzątacz folderu – wyszukiwarka zduplikowanych plików."""
+"""Sprzątacz folderu: wyszukiwarka zduplikowanych plików."""
