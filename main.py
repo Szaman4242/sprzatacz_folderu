@@ -6,17 +6,17 @@ SHA-256 i wypisuje grupy prawdziwych duplikatów oraz miejsce do odzyskania.
 Uruchomienie:
     python main.py dane_testowe
     python main.py dane_testowe --tryb procesy --pracownicy 4
+    python main.py dane_testowe --raport wyniki/raport.csv
 """
 
 import argparse
 import logging
 import sys
-import time
 from pathlib import Path
 
+from sprzatacz.raport import Raport
 from sprzatacz.skaner import filtruj, grupuj_po_rozmiarze, skanuj
 from sprzatacz.skroty import TRYBY, znajdz_duplikaty
-from sprzatacz.wzorce import rozpoznaj_kopie
 
 
 def main() -> int:
@@ -28,11 +28,15 @@ def main() -> int:
                         help="sposób liczenia skrótów (domyślnie: watki)")
     parser.add_argument("--pracownicy", type=int, default=None,
                         help="liczba wątków lub procesów (domyślnie: automatycznie)")
+    parser.add_argument("--raport", type=Path, default=None,
+                        help="zapisz raport do pliku .txt lub .csv")
     parser.add_argument("-v", "--verbose", action="store_true", help="więcej komunikatów")
     args = parser.parse_args()
 
     if args.pracownicy is not None and args.pracownicy < 1:
         parser.error("--pracownicy musi być co najmniej 1")
+    if args.raport and args.raport.suffix.lower().lstrip(".") not in Raport.FORMATY:
+        parser.error("--raport musi mieć rozszerzenie .txt lub .csv")
 
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
@@ -48,28 +52,23 @@ def main() -> int:
     grupy = grupuj_po_rozmiarze(pliki)
     liczba_kandydatow = sum(len(sciezki) for sciezki in grupy.values())
 
-    # Krok 2: skróty SHA-256 tylko dla kandydatów, w wybranym trybie
-    start = time.perf_counter()
+    # Krok 2: skróty SHA-256 tylko dla kandydatów (czas mierzy dekorator @zmierz_czas)
     duplikaty = znajdz_duplikaty(grupy, tryb=args.tryb, pracownicy=args.pracownicy)
-    czas = time.perf_counter() - start
 
-    # Podsumowanie – wyrażenia generujące
-    liczba_zbednych = sum(len(grupa) - 1 for grupa in duplikaty)
-    do_odzyskania = sum((len(grupa) - 1) * grupa[0].stat().st_size for grupa in duplikaty)
-
+    # Krok 3: raport
+    raport = Raport(duplikaty, args.katalog)
     print(f"Kandydaci (ten sam rozmiar): {liczba_kandydatow} plików")
-    print(f"Grupy duplikatów (ta sama treść): {len(duplikaty)}")
-    print(f"Zbędne kopie: {liczba_zbednych} plików")
-    print(f"Miejsce do odzyskania: {do_odzyskania / 1024**2:.1f} MB")
-    print(f"Czas liczenia skrótów ({args.tryb}): {czas:.2f} s")
-
+    print(raport.podsumowanie())
     if args.verbose:
-        # największe pliki na górze
-        for grupa in sorted(duplikaty, key=lambda g: g[0].stat().st_size, reverse=True):
-            print(f"\n{grupa[0].stat().st_size / 1024:.0f} KB:")
-            for sciezka in sorted(grupa):
-                oznaczenie = "  (kopia)" if rozpoznaj_kopie(sciezka.name) else ""
-                print(f"   {sciezka}{oznaczenie}")
+        print(raport.szczegoly())
+
+    if args.raport:
+        raport.format = args.raport.suffix  # setter @property sprawdza format
+        try:
+            raport.zapisz(args.raport)
+        except OSError as blad:
+            print(f"Błąd zapisu raportu: {blad}", file=sys.stderr)
+            return 1
     return 0
 
 

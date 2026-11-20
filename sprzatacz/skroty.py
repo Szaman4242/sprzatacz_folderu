@@ -20,12 +20,16 @@ from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from pathlib import Path
 
 from sprzatacz.czytnik import CzytnikPliku
+from sprzatacz.dekoratory import ponow, zmierz_czas
 
 logger = logging.getLogger(__name__)
 
 TRYBY = ("sekwencyjnie", "watki", "procesy")
 
 
+# Ponawiamy tylko przy PermissionError (np. plik chwilowo zablokowany przez inny
+# program). FileNotFoundError nie ma sensu ponawiać – pliku i tak nie będzie.
+@ponow(proby=3, opoznienie=0.2, wyjatki=(PermissionError,))
 def oblicz_skrot(sciezka: Path) -> str:
     """Zwraca skrót SHA-256 pliku jako tekst szesnastkowy (64 znaki).
 
@@ -103,6 +107,7 @@ def _licz_procesami(
             zbieracz.dodaj(sciezka, skrot)
 
 
+@zmierz_czas
 def znajdz_duplikaty(
     grupy: dict[int, list[Path]],
     tryb: str = "watki",
