@@ -1,8 +1,7 @@
 """Sprzątacz folderu – punkt wejścia programu.
 
-Etap 1: skanuje folder i pokazuje grupy plików o tym samym rozmiarze
-(kandydatów na duplikaty). Kolejne etapy dodadzą liczenie skrótów SHA-256
-i raport z duplikatami.
+Skanuje folder, wybiera pliki o tym samym rozmiarze, liczy dla nich skróty
+SHA-256 i wypisuje grupy prawdziwych duplikatów oraz miejsce do odzyskania.
 
 Uruchomienie:
     python main.py dane_testowe
@@ -14,6 +13,7 @@ import sys
 from pathlib import Path
 
 from sprzatacz.skaner import filtruj, grupuj_po_rozmiarze, skanuj
+from sprzatacz.skroty import znajdz_duplikaty
 from sprzatacz.wzorce import rozpoznaj_kopie
 
 
@@ -34,26 +34,30 @@ def main() -> int:
         print(f"Błąd: '{args.katalog}' nie jest folderem.", file=sys.stderr)
         return 1
 
-    # Potok generatorów: nic się nie dzieje, dopóki grupuj_po_rozmiarze nie zacznie
-    # pobierać plików – wtedy skanuj i filtruj oddają je po jednym.
+    # Krok 1: potok generatorów – skanowanie, filtrowanie, grupowanie po rozmiarze
     pliki = filtruj(skanuj(args.katalog), min_rozmiar=args.min_rozmiar)
     grupy = grupuj_po_rozmiarze(pliki)
-
-    # Wyrażenia generujące (generator expressions) do podsumowania
     liczba_kandydatow = sum(len(sciezki) for sciezki in grupy.values())
-    liczba_kopii_z_nazwy = sum(
-        1 for sciezki in grupy.values() for s in sciezki if rozpoznaj_kopie(s.name)
-    )
 
-    print(f"Grupy plików o tym samym rozmiarze: {len(grupy)}")
-    print(f"Kandydaci na duplikaty: {liczba_kandydatow} plików")
-    print(f"W tym z nazwą wyglądającą na kopię: {liczba_kopii_z_nazwy}")
+    # Krok 2: skróty SHA-256 tylko dla kandydatów
+    duplikaty = znajdz_duplikaty(grupy)
+
+    # Podsumowanie – wyrażenia generujące
+    liczba_zbednych = sum(len(grupa) - 1 for grupa in duplikaty)
+    do_odzyskania = sum((len(grupa) - 1) * grupa[0].stat().st_size for grupa in duplikaty)
+
+    print(f"Kandydaci (ten sam rozmiar): {liczba_kandydatow} plików")
+    print(f"Grupy duplikatów (ta sama treść): {len(duplikaty)}")
+    print(f"Zbędne kopie: {liczba_zbednych} plików")
+    print(f"Miejsce do odzyskania: {do_odzyskania / 1024**2:.1f} MB")
 
     if args.verbose:
-        for rozmiar, sciezki in sorted(grupy.items(), reverse=True):
-            print(f"\n{rozmiar / 1024:.0f} KB:")
-            for sciezka in sciezki:
-                print(f"   {sciezka}")
+        # największe pliki na górze
+        for grupa in sorted(duplikaty, key=lambda g: g[0].stat().st_size, reverse=True):
+            print(f"\n{grupa[0].stat().st_size / 1024:.0f} KB:")
+            for sciezka in sorted(grupa):
+                oznaczenie = "  (kopia)" if rozpoznaj_kopie(sciezka.name) else ""
+                print(f"   {sciezka}{oznaczenie}")
     return 0
 
 
