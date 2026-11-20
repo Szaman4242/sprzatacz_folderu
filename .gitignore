@@ -5,4 +5,6 @@ venv/
 .idea/
 dane_testowe/
 NOTATKI.md
-wyniki/
+wyniki/*
+!wyniki/gil_benchmark.md
+!wyniki/gil_benchmark.png
